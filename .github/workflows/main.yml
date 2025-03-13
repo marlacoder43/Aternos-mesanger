@@ -1,0 +1,24 @@
+name: Run Telegram Bot
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 * * * *"  # Har soatda botni ishga tushiradi
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔄 Repositoriyni yuklab olish
+        uses: actions/checkout@v3
+
+      - name: 🛠 Python va kutubxonalarni o‘rnatish
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-chromedriver
+          pip install telethon selenium
+
+      - name: 🚀 Botni ishga tushirish
+        run: python bot.py
