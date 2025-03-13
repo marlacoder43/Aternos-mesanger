@@ -4,9 +4,7 @@ on:
   push:
     branches:
       - main
-  schedule:
-    - cron: "0 * * * *"  # Har soatda botni ishga tushiradi
-
+  
 jobs:
   run-bot:
     runs-on: ubuntu-latest
