@@ -31,141 +31,113 @@ service = Service("/usr/bin/chromedriver")
 async def start(event):
     chat = event.chat_id
     message = "👋 Welcome! Manage your Aternos Minecraft server.\n👇 Choose an option:"
-    buttons = [[Button.inline("🔑 Login", b"login")]]
+    buttons = [
+        [Button.inline("🔑 Login", b"login"), Button.inline("🆕 Register", b"register")]
+    ]
     await bot.send_message(chat, message, buttons=buttons)
 
-# Login process
-@bot.on(events.CallbackQuery(data=b"login"))
-async def login_step1(event):
+# Register button clicked
+@bot.on(events.CallbackQuery(data=b"register"))
+async def register_step1(event):
     chat = event.chat_id
-    await bot.send_message(chat, "📝 Please enter your Aternos username:")
-    user_data[chat] = {"step": "awaiting_username"}
+    await bot.send_message(chat, "📝 Please enter a username for your Aternos account:")
+    user_data[chat] = {"step": "awaiting_register_username"}
 
 @bot.on(events.NewMessage)
-async def handle_login(event):
+async def handle_registration(event):
     chat = event.chat_id
     if chat in user_data:
-        if user_data[chat]["step"] == "awaiting_username":
+        step = user_data[chat]["step"]
+        
+        if step == "awaiting_register_username":
             user_data[chat]["username"] = event.text
-            user_data[chat]["step"] = "awaiting_password"
-            await bot.send_message(chat, "🔑 Now enter your password:")
-        elif user_data[chat]["step"] == "awaiting_password":
+            user_data[chat]["step"] = "awaiting_register_password"
+            await bot.send_message(chat, "🔑 Now enter a password for your account:")
+
+        elif step == "awaiting_register_password":
             user_data[chat]["password"] = event.text
-            await bot.send_message(chat, "⏳ Logging in...")
+            user_data[chat]["step"] = "awaiting_register_confirm_password"
+            await bot.send_message(chat, "🔐 Please confirm your password:")
 
-            # Login to Aternos
-            login_success = await aternos_login(chat, user_data[chat]["username"], user_data[chat]["password"])
+        elif step == "awaiting_register_confirm_password":
+            if event.text != user_data[chat]["password"]:
+                await bot.send_message(chat, "❌ Passwords do not match! Please enter again:")
+                return
+            user_data[chat]["step"] = "awaiting_register_email"
+            await bot.send_message(chat, "📧 Now enter your email address:")
 
-            if login_success:
-                await show_main_menu(chat)
+        elif step == "awaiting_register_email":
+            user_data[chat]["email"] = event.text
+            await bot.send_message(chat, "⏳ Creating your account...")
+            
+            success = await aternos_register(chat, user_data[chat]["username"], user_data[chat]["password"], user_data[chat]["email"])
+
+            if success:
+                await bot.send_message(chat, "✅ Registration successful! You can now login.")
             else:
-                await bot.send_message(chat, "❌ Login failed! Incorrect username or password.")
+                await bot.send_message(chat, "❌ Registration failed! Username may already be taken or an error occurred.")
 
-            del user_data[chat]
+            del user_data[chat]  # Clear user session
 
-# Aternos Login function
-async def aternos_login(chat, username, password):
+# Aternos account registration automation
+async def aternos_register(chat, username, password, email):
     try:
         driver = webdriver.Chrome(service=service, options=chrome_options)
-        driver.get("https://aternos.org/go/")
+        driver.get("https://aternos.org/register/")
         time.sleep(3)
 
-        driver.find_element(By.NAME, "user").send_keys(username)
-        driver.find_element(By.NAME, "password").send_keys(password)
-        driver.find_element(By.NAME, "password").send_keys(Keys.RETURN)
+        # Enter username
+        username_input = driver.find_element(By.NAME, "user")
+        username_input.send_keys(username)
+        time.sleep(1)
 
+        # Accept terms & privacy policy
+        driver.find_element(By.NAME, "tos").click()
+        driver.find_element(By.NAME, "privacy").click()
+        time.sleep(1)
+
+        # Click "Next"
+        driver.find_element(By.CLASS_NAME, "next").click()
+        time.sleep(3)
+
+        # If username is taken, ask again
+        if "already taken" in driver.page_source:
+            driver.quit()
+            await bot.send_message(chat, "❌ Username is already taken. Please enter a new one:")
+            user_data[chat]["step"] = "awaiting_register_username"
+            return False
+
+        # Enter password
+        password_input = driver.find_element(By.NAME, "password")
+        password_input.send_keys(password)
+        time.sleep(1)
+
+        # Confirm password
+        confirm_password_input = driver.find_element(By.NAME, "password_repeat")
+        confirm_password_input.send_keys(password)
+        time.sleep(1)
+
+        # Click "Next"
+        driver.find_element(By.CLASS_NAME, "next").click()
+        time.sleep(3)
+
+        # Enter email
+        email_input = driver.find_element(By.NAME, "email")
+        email_input.send_keys(email)
+        time.sleep(1)
+
+        # Click "Register"
+        driver.find_element(By.CLASS_NAME, "register").click()
         time.sleep(5)
 
-        if "dashboard" in driver.current_url:
-            user_data[chat]["driver"] = driver  # Store session
+        # Check if registration was successful
+        if "welcome" in driver.page_source:
+            driver.quit()
             return True
         else:
             driver.quit()
             return False
-    except Exception as e:
-        print("Error:", e)
-        return False
 
-# Show main menu after login
-async def show_main_menu(chat):
-    driver = user_data[chat]["driver"]
-    driver.get("https://aternos.org/servers/")
-
-    time.sleep(3)
-    
-    servers = driver.find_elements(By.CLASS_NAME, "server-name")  # Find servers
-    buttons = []
-
-    if servers:
-        for server in servers:
-            server_name = server.text.strip()
-            buttons.append([Button.inline(f"🌍 {server_name}", f"server_{server_name}".encode())])
-    else:
-        await bot.send_message(chat, "⚠️ You don't have any servers.")
-
-    buttons.append([Button.inline("➕ Create Server", b"create_server")])  # Create server button
-    await bot.send_message(chat, "🛠 Your Servers:", buttons=buttons)
-
-# Handle server creation
-@bot.on(events.CallbackQuery(data=b"create_server"))
-async def choose_server_type(event):
-    chat = event.chat_id
-    await bot.send_message(chat, "🛠 Choose server type:", buttons=[
-        [Button.inline("🟢 Java", b"server_java"), Button.inline("🔵 Bedrock", b"server_bedrock")]
-    ])
-
-@bot.on(events.CallbackQuery(pattern=b"server_"))
-async def ask_server_name(event):
-    chat = event.chat_id
-    server_type = event.data.decode().split("_")[1]
-    user_data[chat] = {"step": "awaiting_server_name", "server_type": server_type}
-    await bot.send_message(chat, "📌 Enter a name for your server:")
-
-@bot.on(events.NewMessage)
-async def create_server(event):
-    chat = event.chat_id
-    if chat in user_data and user_data[chat]["step"] == "awaiting_server_name":
-        server_name = event.text
-        server_type = user_data[chat]["server_type"]
-
-        await bot.send_message(chat, f"⏳ Creating {server_type} server named '{server_name}'...")
-        success = await aternos_create_server(chat, server_name, server_type)
-
-        if success:
-            await bot.send_message(chat, f"✅ Server '{server_name}' created successfully!")
-        else:
-            await bot.send_message(chat, "❌ Failed to create server!")
-
-        del user_data[chat]
-
-# Aternos Server Creation function
-async def aternos_create_server(chat, server_name, server_type):
-    try:
-        driver = user_data[chat]["driver"]
-        driver.get("https://aternos.org/servers/")
-        time.sleep(3)
-
-        driver.find_element(By.CLASS_NAME, "addserver").click()  # Click add server
-        time.sleep(2)
-
-        # Select server type
-        if server_type == "java":
-            driver.find_element(By.CLASS_NAME, "java").click()
-        else:
-            driver.find_element(By.CLASS_NAME, "bedrock").click()
-        
-        time.sleep(2)
-
-        # Enter server name
-        name_box = driver.find_element(By.CLASS_NAME, "server-name-input")
-        name_box.clear()
-        name_box.send_keys(server_name)
-
-        # Confirm server creation
-        driver.find_element(By.CLASS_NAME, "confirm").click()
-        time.sleep(5)
-
-        return True
     except Exception as e:
         print("Error:", e)
         return False
