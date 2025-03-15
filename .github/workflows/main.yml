@@ -16,6 +16,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y chromium-chromedriver
+          pip install telethon selenium webdriver-manager
           pip install telethon selenium
 
       - name: 🚀 Botni ishga tushirish
